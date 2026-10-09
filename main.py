@@ -343,8 +343,10 @@ async def import_excel(file: UploadFile = File(...), db: Session = Depends(get_d
             name_val = str(row.get("name", "")).strip() or "Unnamed Item"
             category_val = str(row.get("category", "")).strip() or "General"
             
-            if name_val.lower() == "nan": name_val = "Unnamed Item"
-            if category_val.lower() == "nan": category_val = "General"
+            if name_val.lower() == "nan": 
+                name_val = "Unnamed Item"
+            if category_val.lower() == "nan": 
+                category_val = "General"
 
             purchase_price = parse_float(row.get("purchase_price") or row.get("price") or row.get("unit_price"))
             selling_price = parse_float(row.get("selling_price") or row.get("sold") or row.get("units_sold"))
@@ -360,4 +362,22 @@ async def import_excel(file: UploadFile = File(...), db: Session = Depends(get_d
                 price=purchase_price,
                 sold=selling_price
             )
-            db.add(
+            db.add(new_item)
+            
+        db.commit()
+        return RedirectResponse(url="/", status_code=303)
+        
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid file format: {str(e)}")
+
+@app.get("/export/pdf")
+def export_pdf(db: Session = Depends(get_db)):
+    # Export EVERY item (including stock 0)
+    items = db.query(Item).all()
+    buffer = io.BytesIO()
+    
+    doc = SimpleDocTemplate(buffer, pagesize=letter)
+    elements = []
+    styles = getSampleStyleSheet()
+
+    elements.append(
