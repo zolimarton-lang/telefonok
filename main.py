@@ -35,8 +35,8 @@ class Item(Base):
     name = Column(String, index=True)
     category = Column(String, index=True)
     quantity = Column(Integer, default=0)
-    price = Column(Float, default=0.0)
-    sold = Column(Integer, default=0)
+    price = Column(Float, default=0.0)  # Purchase Price
+    sold = Column(Float, default=0.0)   # Selling Price
 
 Base.metadata.create_all(bind=engine)
 
@@ -83,7 +83,7 @@ def index(request: Request, search: Optional[str] = None, db: Session = Depends(
             "search": search or "",
             "total_items": total_items,
             "total_val": round(total_val, 2),
-            "total_sold": total_sold
+            "total_sold": round(total_sold, 2)
         }
     )
 
@@ -92,7 +92,8 @@ def add_item(
     name: str = Form(...),
     category: str = Form(...),
     quantity: int = Form(...),
-    price: float = Form(...),
+    price: float = Form(...),            # Purchase Price
+    selling_price: float = Form(0.0),    # Selling Price
     db: Session = Depends(get_db)
 ):
     new_item = Item(
@@ -100,7 +101,7 @@ def add_item(
         category=category.strip(),
         quantity=max(0, quantity),
         price=max(0.0, price),
-        sold=0
+        sold=max(0.0, selling_price)
     )
     db.add(new_item)
     db.commit()
@@ -123,10 +124,9 @@ def update_stock(
                 raise HTTPException(status_code=400, detail="Not enough stock available")
             
             if selling_price is not None and selling_price >= 0:
-                item.price = selling_price
+                item.sold = selling_price  # Updates the selling price
                 
             item.quantity -= amount
-            item.sold += amount
         db.commit()
     return RedirectResponse(url="/", status_code=303)
 
@@ -144,18 +144,14 @@ def analytics(request: Request, db: Session = Depends(get_db)):
     
     formatted_items = []
     for i in items:
-        total_units = i.quantity + i.sold
-        turnover = round((i.sold / total_units) * 100, 1) if total_units > 0 else 0.0
-        revenue = round(i.sold * i.price, 2)
         formatted_items.append({
             "id": i.id,
             "name": i.name,
             "category": i.category,
             "quantity": i.quantity,
-            "price": i.price,
-            "sold": i.sold,
-            "turnover_rate": turnover,
-            "total_revenue": revenue
+            "purchase_price": i.price,
+            "selling_price": i.sold,
+            "profit_margin": round(i.sold - i.price, 2)
         })
 
     return templates.TemplateResponse(
@@ -168,8 +164,12 @@ def analytics(request: Request, db: Session = Depends(get_db)):
 def export_excel(db: Session = Depends(get_db)):
     items = db.query(Item).all()
     data = [{
-        "id": i.id, "name": i.name, "category": i.category, 
-        "quantity": i.quantity, "price": i.price, "sold": i.sold
+        "id": i.id, 
+        "name": i.name, 
+        "category": i.category, 
+        "quantity": i.quantity, 
+        "purchase_price": i.price, 
+        "selling_price": i.sold
     } for i in items]
     
     df = pd.DataFrame(data)
@@ -190,15 +190,7 @@ async def import_excel(file: UploadFile = File(...), db: Session = Depends(get_d
     contents = await file.read()
     try:
         df = pd.read_excel(io.BytesIO(contents), dtype=str)
-        df.columns = [str(col).strip().lower() for col in df.columns]
-        
-        required_cols = {"name", "category", "quantity", "price"}
-        if not required_cols.issubset(set(df.columns)):
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Excel missing required columns. Found: {list(df.columns)}. Required: name, category, quantity, price"
-            )
-
+        df.columns = [str(col).strip().lower().replace(" ", "_") for col in df.columns]
         df = df.fillna("")
 
         def parse_int(val, default=0):
@@ -210,7 +202,7 @@ async def import_excel(file: UploadFile = File(...), db: Session = Depends(get_d
 
         def parse_float(val, default=0.0):
             try:
-                clean_str = str(val).strip()
+                clean_str = str(val).replace("$", "").replace(",", "").strip()
                 return float(clean_str) if clean_str else default
             except (ValueError, TypeError):
                 return default
@@ -224,20 +216,22 @@ async def import_excel(file: UploadFile = File(...), db: Session = Depends(get_d
             if category_val.lower() == "nan":
                 category_val = "General"
 
+            # Parse columns whether named purchase_price/price/unit_price or selling_price/sold/units_sold
+            purchase_price = parse_float(row.get("purchase_price") or row.get("price") or row.get("unit_price"))
+            selling_price = parse_float(row.get("selling_price") or row.get("sold") or row.get("units_sold"))
+
             new_item = Item(
                 name=name_val,
                 category=category_val,
                 quantity=max(0, parse_int(row.get("quantity"), default=1)),
-                price=max(0.0, parse_float(row.get("price"), default=0.0)),
-                sold=max(0, parse_int(row.get("sold"), default=0))
+                price=purchase_price,
+                sold=selling_price
             )
             db.add(new_item)
             
         db.commit()
         return RedirectResponse(url="/", status_code=303)
         
-    except HTTPException as he:
-        raise he
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid file format: {str(e)}")
 
@@ -253,7 +247,7 @@ def export_pdf(db: Session = Depends(get_db)):
     elements.append(Paragraph("Inventory Management Summary Report", styles["Title"]))
     elements.append(Spacer(1, 18))
 
-    data = [["ID", "Name", "Category", "Quantity", "Price ($)", "Sold"]]
+    data = [["ID", "Name", "Category", "Quantity", "Purchase ($)", "Selling ($)"]]
     for item in items:
         data.append([
             str(item.id),
@@ -261,10 +255,10 @@ def export_pdf(db: Session = Depends(get_db)):
             item.category,
             str(item.quantity),
             f"{item.price:.2f}",
-            str(item.sold)
+            f"{item.sold:.2f}"
         ])
 
-    table = Table(data, colWidths=[40, 160, 110, 70, 70, 50])
+    table = Table(data, colWidths=[30, 170, 100, 60, 80, 80])
     table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2563EB")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),

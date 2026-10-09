@@ -52,8 +52,8 @@
         <div class="col-md-4">
             <div class="card shadow-sm card-stat-sold">
                 <div class="card-body">
-                    <h6 class="card-subtitle text-muted mb-1">Total Units Sold</h6>
-                    <h3 class="card-title mb-0 fw-bold text-warning">{{ total_sold }}</h3>
+                    <h6 class="card-subtitle text-muted mb-1">Total Sales Record</h6>
+                    <h3 class="card-title mb-0 fw-bold text-warning">${{ total_sold }}</h3>
                 </div>
             </div>
         </div>
@@ -98,8 +98,8 @@
                             <th>Name</th>
                             <th>Category</th>
                             <th>Quantity</th>
-                            <th>Unit Price</th>
-                            <th>Units Sold</th>
+                            <th>Purchase Price</th>
+                            <th>Selling Price</th>
                             <th class="text-end">Actions</th>
                         </tr>
                     </thead>
@@ -116,7 +116,7 @@
                                     </span>
                                 </td>
                                 <td>${{ "%.2f"|format(item.price) }}</td>
-                                <td>{{ item.sold }}</td>
+                                <td>${{ "%.2f"|format(item.sold) }}</td>
                                 <td class="text-end action-btns">
                                     <button class="btn btn-sm btn-outline-success" data-bs-toggle="modal" data-bs-target="#addStockModal{{ item.id }}" title="Add Stock">
                                         <i class="bi bi-box-arrow-in-down"></i> Restock
@@ -187,9 +187,8 @@
                             <div class="form-text">Available stock: {{ item.quantity }}</div>
                         </div>
                         <div class="mb-3">
-                            <label class="form-label">Selling Price per Unit ($)</label>
-                            <input type="number" step="0.01" name="selling_price" class="form-control" value="{{ "%.2f"|format(item.price) }}" required>
-                            <div class="form-text">Defaults to current unit price. Adjust if negotiated or discounted.</div>
+                            <label class="form-label">Selling Price ($)</label>
+                            <input type="number" step="0.01" name="selling_price" class="form-control" value="{{ "%.2f"|format(item.sold) }}" required>
                         </div>
                     </div>
                     <div class="modal-footer">
@@ -219,15 +218,19 @@
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Category</label>
-                        <input type="text" name="category" class="form-control" placeholder="e.g., Apple, Samsung, Accessories" required>
+                        <input type="text" name="category" class="form-control" placeholder="e.g., telefonok, laptop" required>
                     </div>
                     <div class="mb-3">
-                        <label class="form-label">Initial Quantity</label>
+                        <label class="form-label">Quantity</label>
                         <input type="number" name="quantity" class="form-control" value="1" min="0" required>
                     </div>
                     <div class="mb-3">
-                        <label class="form-label">Unit Price ($)</label>
+                        <label class="form-label">Purchase Price ($)</label>
                         <input type="number" step="0.01" name="price" class="form-control" value="0.00" min="0" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Selling Price ($)</label>
+                        <input type="number" step="0.01" name="selling_price" class="form-control" value="0.00" min="0" required>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -249,7 +252,7 @@
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
-                    <p class="text-muted small">Upload an <code>.xlsx</code> file containing columns: <strong>name</strong>, <strong>category</strong>, <strong>quantity</strong>, and <strong>price</strong>.</p>
+                    <p class="text-muted small">Upload an <code>.xlsx</code> file containing columns: <strong>name</strong>, <strong>category</strong>, <strong>quantity</strong>, <strong>purchase_price</strong> (or price), and <strong>selling_price</strong> (or sold).</p>
                     <div class="mb-3">
                         <input type="file" name="file" accept=".xlsx, .xls" class="form-control" required>
                     </div>
