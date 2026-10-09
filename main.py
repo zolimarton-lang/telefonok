@@ -19,7 +19,6 @@ from sqlalchemy.orm import sessionmaker, Session
 # --- DATABASE SETUP ---
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./inventory.db")
 
-# Render provides 'postgres://' URLs, but SQLAlchemy requires 'postgresql://'
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
@@ -60,20 +59,40 @@ STATIC_DIR.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
+# --- HELPER LOGIC ---
+def adjust_quantity(qty: int, selling_price: float) -> int:
+    """If quantity is 1 and selling price is present (>0), auto-set quantity to 0."""
+    if qty == 1 and selling_price > 0:
+        return 0
+    return max(0, qty)
+
 # --- ROUTES ---
 
 @app.get("/", response_class=HTMLResponse)
-def index(request: Request, search: Optional[str] = None, db: Session = Depends(get_db)):
+def index(
+    request: Request, 
+    search: Optional[str] = None, 
+    show_out_of_stock: bool = False,
+    db: Session = Depends(get_db)
+):
     query = db.query(Item)
+    
     if search:
         s = f"%{search.lower()}%"
         query = query.filter(Item.name.ilike(s) | Item.category.ilike(s))
     
-    items = query.all()
+    all_items = db.query(Item).all()
     
-    total_items = sum(i.quantity for i in items)
-    total_val = sum(i.quantity * i.price for i in items)
-    total_sold = sum(i.sold for i in items)
+    # Calculate KPIs across ALL items (including stock = 0)
+    total_items = sum(i.quantity for i in all_items)
+    total_val = sum(i.quantity * i.price for i in all_items)
+    total_sold = sum(i.sold for i in all_items)
+    
+    # Filter UI list by stock level unless explicitly requested
+    if not show_out_of_stock:
+        query = query.filter(Item.quantity > 0)
+        
+    items = query.all()
     
     return templates.TemplateResponse(
         request=request,
@@ -81,6 +100,7 @@ def index(request: Request, search: Optional[str] = None, db: Session = Depends(
         context={
             "items": items, 
             "search": search or "",
+            "show_out_of_stock": show_out_of_stock,
             "total_items": total_items,
             "total_val": round(total_val, 2),
             "total_sold": round(total_sold, 2)
@@ -96,12 +116,15 @@ def add_item(
     selling_price: float = Form(0.0),    # Selling Price
     db: Session = Depends(get_db)
 ):
+    sp = max(0.0, selling_price)
+    qty = adjust_quantity(quantity, sp)
+
     new_item = Item(
         name=name.strip(),
         category=category.strip(),
-        quantity=max(0, quantity),
+        quantity=qty,
         price=max(0.0, price),
-        sold=max(0.0, selling_price)
+        sold=sp
     )
     db.add(new_item)
     db.commit()
@@ -124,9 +147,11 @@ def update_stock(
                 raise HTTPException(status_code=400, detail="Not enough stock available")
             
             if selling_price is not None and selling_price >= 0:
-                item.sold = selling_price  # Updates the selling price
+                item.sold = selling_price
                 
             item.quantity -= amount
+            item.quantity = adjust_quantity(item.quantity, item.sold)
+
         db.commit()
     return RedirectResponse(url="/", status_code=303)
 
@@ -162,6 +187,7 @@ def analytics(request: Request, db: Session = Depends(get_db)):
 
 @app.get("/export/excel")
 def export_excel(db: Session = Depends(get_db)):
+    # Export EVERY item (including stock 0)
     items = db.query(Item).all()
     data = [{
         "id": i.id, 
@@ -216,14 +242,17 @@ async def import_excel(file: UploadFile = File(...), db: Session = Depends(get_d
             if category_val.lower() == "nan":
                 category_val = "General"
 
-            # Parse columns whether named purchase_price/price/unit_price or selling_price/sold/units_sold
             purchase_price = parse_float(row.get("purchase_price") or row.get("price") or row.get("unit_price"))
             selling_price = parse_float(row.get("selling_price") or row.get("sold") or row.get("units_sold"))
+            raw_quantity = parse_int(row.get("quantity"), default=1)
+
+            # Enforce rule: if qty == 1 and selling_price > 0, set qty = 0
+            final_quantity = adjust_quantity(raw_quantity, selling_price)
 
             new_item = Item(
                 name=name_val,
                 category=category_val,
-                quantity=max(0, parse_int(row.get("quantity"), default=1)),
+                quantity=final_quantity,
                 price=purchase_price,
                 sold=selling_price
             )
@@ -237,6 +266,7 @@ async def import_excel(file: UploadFile = File(...), db: Session = Depends(get_d
 
 @app.get("/export/pdf")
 def export_pdf(db: Session = Depends(get_db)):
+    # Export EVERY item (including stock 0)
     items = db.query(Item).all()
     buffer = io.BytesIO()
     

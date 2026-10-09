@@ -65,14 +65,26 @@
             <div class="row g-3 align-items-center">
                 <div class="col-md-6">
                     <form action="/" method="get" class="d-flex gap-2">
+                        {% if show_out_of_stock %}
+                            <input type="hidden" name="show_out_of_stock" value="true">
+                        {% endif %}
                         <input type="text" name="search" class="form-control" placeholder="Search by name or category..." value="{{ search }}">
                         <button type="submit" class="btn btn-primary"><i class="bi bi-search"></i> Search</button>
                         {% if search %}
-                            <a href="/" class="btn btn-outline-secondary">Clear</a>
+                            <a href="/{% if show_out_of_stock %}?show_out_of_stock=true{% endif %}" class="btn btn-outline-secondary">Clear</a>
                         {% endif %}
                     </form>
                 </div>
-                <div class="col-md-6 d-flex justify-content-md-end gap-2">
+                <div class="col-md-6 d-flex justify-content-md-end gap-2 align-items-center">
+                    {% if show_out_of_stock %}
+                        <a href="/{% if search %}?search={{ search }}{% endif %}" class="btn btn-outline-secondary btn-sm">
+                            <i class="bi bi-eye-slash"></i> Hide Out of Stock
+                        </a>
+                    {% else %}
+                        <a href="/?show_out_of_stock=true{% if search %}&search={{ search }}{% endif %}" class="btn btn-outline-info btn-sm">
+                            <i class="bi bi-eye"></i> Show Out of Stock
+                        </a>
+                    {% endif %}
                     <button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#addItemModal">
                         <i class="bi bi-plus-lg"></i> Add New Item
                     </button>
@@ -86,8 +98,13 @@
 
     <!-- Inventory Table -->
     <div class="card shadow-sm">
-        <div class="card-header bg-white py-3">
-            <h5 class="mb-0 fw-bold">Inventory Items</h5>
+        <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+            <h5 class="mb-0 fw-bold">
+                Inventory Items
+                {% if show_out_of_stock %}
+                    <span class="badge bg-info text-dark ms-2">Including Out of Stock</span>
+                {% endif %}
+            </h5>
         </div>
         <div class="card-body p-0">
             <div class="table-responsive">
@@ -106,7 +123,7 @@
                     <tbody>
                         {% if items %}
                             {% for item in items %}
-                            <tr>
+                            <tr {% if item.quantity == 0 %}class="table-light text-muted"{% endif %}>
                                 <td>{{ item.id }}</td>
                                 <td class="fw-semibold">{{ item.name }}</td>
                                 <td><span class="badge bg-secondary">{{ item.category }}</span></td>
@@ -170,7 +187,7 @@
         </div>
     </div>
 
-    <!-- Modal: Sell Item with Custom Selling Price -->
+    <!-- Modal: Sell Item -->
     <div class="modal fade" id="sellModal{{ item.id }}" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog">
             <div class="modal-content">
@@ -231,6 +248,7 @@
                     <div class="mb-3">
                         <label class="form-label">Selling Price ($)</label>
                         <input type="number" step="0.01" name="selling_price" class="form-control" value="0.00" min="0" required>
+                        <div class="form-text">If quantity is 1 and a selling price is entered, stock will automatically set to 0.</div>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -252,7 +270,7 @@
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
-                    <p class="text-muted small">Upload an <code>.xlsx</code> file containing columns: <strong>name</strong>, <strong>category</strong>, <strong>quantity</strong>, <strong>purchase_price</strong> (or price), and <strong>selling_price</strong> (or sold).</p>
+                    <p class="text-muted small">Upload an <code>.xlsx</code> file containing columns: <strong>name</strong>, <strong>category</strong>, <strong>quantity</strong>, <strong>purchase_price</strong>, and <strong>selling_price</strong>.</p>
                     <div class="mb-3">
                         <input type="file" name="file" accept=".xlsx, .xls" class="form-control" required>
                     </div>
