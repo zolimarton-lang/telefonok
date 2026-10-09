@@ -352,7 +352,6 @@ async def import_excel(file: UploadFile = File(...), db: Session = Depends(get_d
             selling_price = parse_float(row.get("selling_price") or row.get("sold") or row.get("units_sold"))
             raw_quantity = parse_int(row.get("quantity"), default=1)
 
-            # Rule: if qty == 1 and selling_price > 0, set stock to 0
             final_quantity = adjust_quantity(raw_quantity, selling_price)
 
             new_item = Item(
@@ -372,7 +371,6 @@ async def import_excel(file: UploadFile = File(...), db: Session = Depends(get_d
 
 @app.get("/export/pdf")
 def export_pdf(db: Session = Depends(get_db)):
-    # Export EVERY item (including stock 0)
     items = db.query(Item).all()
     buffer = io.BytesIO()
     
@@ -380,4 +378,31 @@ def export_pdf(db: Session = Depends(get_db)):
     elements = []
     styles = getSampleStyleSheet()
 
-    elements.append(
+    elements.append(Paragraph("Inventory Management Comprehensive Report", styles["Title"]))
+    elements.append(Spacer(1, 18))
+
+    data = [["ID", "Name", "Category", "Quantity", "Purchase ($)", "Selling ($)"]]
+    for item in items:
+        data.append([
+            str(item.id), item.name, item.category,
+            str(item.quantity), f"{item.price:.2f}", f"{item.sold:.2f}"
+        ])
+
+    table = Table(data, colWidths=[30, 170, 100, 60, 80, 80])
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2563EB")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 10),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 8),
+        ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#F8FAFC")),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#E2E8F0")),
+    ]))
+
+    elements.append(table)
+    doc.build(elements)
+    
+    buffer.seek(0)
+    headers = {"Content-Disposition": "attachment; filename=inventory_report.pdf"}
+    return StreamingResponse(buffer, media_type="application/pdf", headers=headers)
