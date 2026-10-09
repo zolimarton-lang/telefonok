@@ -22,7 +22,6 @@ from sqlalchemy.orm import sessionmaker, Session
 # --- DATABASE SETUP ---
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./inventory.db")
 
-# Render compatibility for PostgreSQL connection string
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
@@ -36,12 +35,11 @@ class Item(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, index=True)
-    category = Column(String, index=True)
     quantity = Column(Integer, default=0)
+    purchase_date = Column(DateTime, default=datetime.utcnow)
     price = Column(Float, default=0.0)      # Purchase Price
     sold = Column(Float, default=0.0)       # Selling Price
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    sold_date = Column(DateTime, nullable=True)
 
 Base.metadata.create_all(bind=engine)
 
@@ -84,16 +82,14 @@ def index(
     query = db.query(Item)
     if search:
         s = f"%{search.lower()}%"
-        query = query.filter(Item.name.ilike(s) | Item.category.ilike(s))
+        query = query.filter(Item.name.ilike(s))
     
     all_items = db.query(Item).all()
     
-    # Calculate KPIs across all items in DB
     total_items = sum(i.quantity for i in all_items)
     total_val = sum(i.quantity * i.price for i in all_items)
-    total_sold = sum(i.sold for i in all_items)
+    total_sold = sum(i.sold for i in all_items if i.sold > 0)
     
-    # Hide stock == 0 by default on the main inventory screen
     if not show_out_of_stock:
         query = query.filter(Item.quantity > 0)
         
@@ -115,24 +111,63 @@ def index(
 @app.post("/add")
 def add_item(
     name: str = Form(...),
-    category: str = Form(...),
     quantity: int = Form(...),
-    price: float = Form(...),            # Purchase Price
-    selling_price: float = Form(0.0),    # Selling Price
+    price: float = Form(...),
+    selling_price: float = Form(0.0),
     db: Session = Depends(get_db)
 ):
     sp = max(0.0, selling_price)
     qty = adjust_quantity(quantity, sp)
+    s_date = datetime.utcnow() if sp > 0 else None
 
     new_item = Item(
         name=name.strip(),
-        category=category.strip(),
         quantity=qty,
+        purchase_date=datetime.utcnow(),
         price=max(0.0, price),
-        sold=sp
+        sold=sp,
+        sold_date=s_date
     )
     db.add(new_item)
     db.commit()
+    return RedirectResponse(url="/", status_code=303)
+
+@app.post("/edit/{item_id}")
+def edit_item(
+    item_id: int,
+    name: str = Form(...),
+    quantity: int = Form(...),
+    price: float = Form(...),
+    selling_price: float = Form(...),
+    purchase_date: Optional[str] = Form(None),
+    sold_date: Optional[str] = Form(None),
+    db: Session = Depends(get_db)
+):
+    item = db.query(Item).filter(Item.id == item_id).first()
+    if item:
+        item.name = name.strip()
+        item.price = max(0.0, price)
+        sp = max(0.0, selling_price)
+        item.sold = sp
+        item.quantity = adjust_quantity(quantity, sp)
+
+        if purchase_date:
+            try:
+                item.purchase_date = datetime.strptime(purchase_date, "%Y-%m-%d")
+            except ValueError:
+                pass
+
+        if sold_date:
+            try:
+                item.sold_date = datetime.strptime(sold_date, "%Y-%m-%d")
+            except ValueError:
+                pass
+        elif sp > 0 and not item.sold_date:
+            item.sold_date = datetime.utcnow()
+        elif sp == 0:
+            item.sold_date = None
+
+        db.commit()
     return RedirectResponse(url="/", status_code=303)
 
 @app.post("/update_stock/{item_id}")
@@ -153,6 +188,8 @@ def update_stock(
             
             if selling_price is not None and selling_price >= 0:
                 item.sold = selling_price
+                if selling_price > 0:
+                    item.sold_date = datetime.utcnow()
                 
             item.quantity -= amount
             item.quantity = adjust_quantity(item.quantity, item.sold)
@@ -178,66 +215,53 @@ def reports_hub(
     all_items = db.query(Item).all()
     today = datetime.utcnow()
 
-    # 1. Date Range Sales & Activity Filtering
-    date_filtered_items = all_items
+    # Sales timeframe filtering using sold_date
+    sold_items = [i for i in all_items if i.sold > 0]
     if start_date:
         try:
             s_dt = datetime.strptime(start_date, "%Y-%m-%d")
-            date_filtered_items = [i for i in date_filtered_items if i.updated_at >= s_dt]
+            sold_items = [i for i in sold_items if i.sold_date and i.sold_date >= s_dt]
         except ValueError:
             pass
     if end_date:
         try:
             e_dt = datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
-            date_filtered_items = [i for i in date_filtered_items if i.updated_at <= e_dt]
+            sold_items = [i for i in sold_items if i.sold_date and i.sold_date <= e_dt]
         except ValueError:
             pass
 
-    # 2. Category Performance Report
-    categories = {}
-    for i in all_items:
-        cat = i.category or "Uncategorized"
-        if cat not in categories:
-            categories[cat] = {"count": 0, "total_qty": 0, "purchase_val": 0.0, "sales_val": 0.0}
-        categories[cat]["count"] += 1
-        categories[cat]["total_qty"] += i.quantity
-        categories[cat]["purchase_val"] += (i.quantity * i.price)
-        categories[cat]["sales_val"] += (i.quantity * i.sold)
+    period_total_sales = sum(i.sold for i in sold_items)
+    period_total_cost = sum(i.price for i in sold_items)
+    period_profit = period_total_sales - period_total_cost
 
-    cat_report = [
-        {
-            "category": k,
-            "item_count": v["count"],
-            "total_qty": v["total_qty"],
-            "purchase_val": round(v["purchase_val"], 2),
-            "potential_sales": round(v["sales_val"], 2),
-            "potential_profit": round(v["sales_val"] - v["purchase_val"], 2)
-        } for k, v in categories.items()
-    ]
-
-    # 3. Oldest Items & Aging Report
+    # Aging report
     aging_items = []
     for i in all_items:
-        age_days = (today - (i.created_at or today)).days
+        age_days = (today - (i.purchase_date or today)).days
         aging_items.append({
-            "id": i.id, "name": i.name, "category": i.category,
-            "quantity": i.quantity, "created_at": i.created_at.strftime("%Y-%m-%d") if i.created_at else "N/A",
+            "id": i.id,
+            "name": i.name,
+            "quantity": i.quantity,
+            "purchase_date": i.purchase_date.strftime("%Y-%m-%d") if i.purchase_date else "N/A",
             "age_days": age_days
         })
     aging_items.sort(key=lambda x: x["age_days"], reverse=True)
 
-    # 4. Low & Out of Stock Report
+    # Low stock
     low_stock_items = [i for i in all_items if i.quantity <= 2]
 
-    # 5. Profitability & Margin Ranking Report
+    # Margin Ranking
     margin_items = []
     for i in all_items:
         profit = round(i.sold - i.price, 2)
         margin_pct = round((profit / i.price * 100), 1) if i.price > 0 else (100.0 if i.sold > 0 else 0.0)
         margin_items.append({
-            "id": i.id, "name": i.name, "category": i.category,
-            "purchase_price": i.price, "selling_price": i.sold,
-            "profit": profit, "margin_pct": margin_pct
+            "id": i.id,
+            "name": i.name,
+            "purchase_price": i.price,
+            "selling_price": i.sold,
+            "profit": profit,
+            "margin_pct": margin_pct
         })
     margin_items.sort(key=lambda x: x["profit"], reverse=True)
 
@@ -247,8 +271,10 @@ def reports_hub(
         context={
             "start_date": start_date or "",
             "end_date": end_date or "",
-            "date_items": date_filtered_items,
-            "cat_report": cat_report,
+            "sold_items": sold_items,
+            "period_total_sales": round(period_total_sales, 2),
+            "period_total_cost": round(period_total_cost, 2),
+            "period_profit": round(period_profit, 2),
             "aging_items": aging_items[:10],
             "low_stock": low_stock_items,
             "margin_items": margin_items
@@ -263,10 +289,11 @@ def analytics(request: Request, db: Session = Depends(get_db)):
         formatted_items.append({
             "id": i.id,
             "name": i.name,
-            "category": i.category,
             "quantity": i.quantity,
+            "purchase_date": i.purchase_date.strftime("%Y-%m-%d") if i.purchase_date else "N/A",
             "purchase_price": i.price,
             "selling_price": i.sold,
+            "sold_date": i.sold_date.strftime("%Y-%m-%d") if i.sold_date else "N/A",
             "profit_margin": round(i.sold - i.price, 2)
         })
 
@@ -278,39 +305,44 @@ def analytics(request: Request, db: Session = Depends(get_db)):
 
 @app.get("/export/excel")
 def export_excel(
-    report_type: str = Query("all"),
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
     db: Session = Depends(get_db)
 ):
     items = db.query(Item).all()
 
-    if start_date:
-        try:
-            s_dt = datetime.strptime(start_date, "%Y-%m-%d")
-            items = [i for i in items if i.updated_at >= s_dt]
-        except ValueError:
-            pass
-    if end_date:
-        try:
-            e_dt = datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
-            items = [i for i in items if i.updated_at <= e_dt]
-        except ValueError:
-            pass
+    if start_date or end_date:
+        items = [i for i in items if i.sold_date]
+        if start_date:
+            try:
+                s_dt = datetime.strptime(start_date, "%Y-%m-%d")
+                items = [i for i in items if i.sold_date >= s_dt]
+            except ValueError:
+                pass
+        if end_date:
+            try:
+                e_dt = datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+                items = [i for i in items if i.sold_date <= e_dt]
+            except ValueError:
+                pass
 
     data = [{
-        "ID": i.id, "Name": i.name, "Category": i.category, 
-        "Quantity": i.quantity, "Purchase Price": i.price, "Selling Price": i.sold,
-        "Created Date": i.created_at.strftime("%Y-%m-%d") if i.created_at else ""
+        "ID": i.id,
+        "Name": i.name,
+        "Quantity": i.quantity,
+        "Purchase Date": i.purchase_date.strftime("%Y-%m-%d") if i.purchase_date else "",
+        "Purchase Price": i.price,
+        "Selling Price": i.sold,
+        "Selling Date": i.sold_date.strftime("%Y-%m-%d") if i.sold_date else ""
     } for i in items]
     
     df = pd.DataFrame(data)
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="Report")
+        df.to_excel(writer, index=False, sheet_name="Inventory Report")
     output.seek(0)
 
-    headers = {"Content-Disposition": f"attachment; filename=inventory_report_{report_type}.xlsx"}
+    headers = {"Content-Disposition": "attachment; filename=inventory_report.xlsx"}
     return StreamingResponse(
         output, 
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
@@ -341,25 +373,23 @@ async def import_excel(file: UploadFile = File(...), db: Session = Depends(get_d
 
         for row in df.to_dict(orient="records"):
             name_val = str(row.get("name", "")).strip() or "Unnamed Item"
-            category_val = str(row.get("category", "")).strip() or "General"
-            
             if name_val.lower() == "nan": 
                 name_val = "Unnamed Item"
-            if category_val.lower() == "nan": 
-                category_val = "General"
 
             purchase_price = parse_float(row.get("purchase_price") or row.get("price") or row.get("unit_price"))
             selling_price = parse_float(row.get("selling_price") or row.get("sold") or row.get("units_sold"))
             raw_quantity = parse_int(row.get("quantity"), default=1)
 
             final_quantity = adjust_quantity(raw_quantity, selling_price)
+            s_date = datetime.utcnow() if selling_price > 0 else None
 
             new_item = Item(
                 name=name_val,
-                category=category_val,
                 quantity=final_quantity,
+                purchase_date=datetime.utcnow(),
                 price=purchase_price,
-                sold=selling_price
+                sold=selling_price,
+                sold_date=s_date
             )
             db.add(new_item)
             
@@ -381,20 +411,27 @@ def export_pdf(db: Session = Depends(get_db)):
     elements.append(Paragraph("Inventory Management Comprehensive Report", styles["Title"]))
     elements.append(Spacer(1, 18))
 
-    data = [["ID", "Name", "Category", "Quantity", "Purchase ($)", "Selling ($)"]]
+    data = [["ID", "Name", "Qty", "Pur. Date", "Pur. ($)", "Sell ($)", "Sell Date"]]
     for item in items:
+        p_date = item.purchase_date.strftime("%Y-%m-%d") if item.purchase_date else "N/A"
+        s_date = item.sold_date.strftime("%Y-%m-%d") if item.sold_date else "N/A"
         data.append([
-            str(item.id), item.name, item.category,
-            str(item.quantity), f"{item.price:.2f}", f"{item.sold:.2f}"
+            str(item.id),
+            item.name,
+            str(item.quantity),
+            p_date,
+            f"{item.price:.2f}",
+            f"{item.sold:.2f}",
+            s_date
         ])
 
-    table = Table(data, colWidths=[30, 170, 100, 60, 80, 80])
+    table = Table(data, colWidths=[30, 150, 40, 75, 75, 75, 75])
     table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2563EB")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
         ("ALIGN", (0, 0), (-1, -1), "CENTER"),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, 0), 10),
+        ("FONTSIZE", (0, 0), (-1, 0), 9),
         ("BOTTOMPADDING", (0, 0), (-1, 0), 8),
         ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#F8FAFC")),
         ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#E2E8F0")),

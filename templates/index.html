@@ -4,9 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Telefonok - Inventory Management</title>
-    <!-- Bootstrap 5 CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-    <!-- Bootstrap Icons -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
     <style>
         body { background-color: #f8f9fa; }
@@ -22,6 +20,7 @@
     <div class="container">
         <a class="navbar-brand fw-bold" href="/"><i class="bi bi-phone"></i> Telefonok Inventory</a>
         <div class="d-flex gap-2">
+            <a href="/reports" class="btn btn-outline-light btn-sm"><i class="bi bi-journal-text"></i> Reports Hub</a>
             <a href="/analytics" class="btn btn-outline-light btn-sm"><i class="bi bi-graph-up"></i> Analytics</a>
             <a href="/export/excel" class="btn btn-light btn-sm"><i class="bi bi-file-earmark-excel"></i> Export Excel</a>
             <a href="/export/pdf" class="btn btn-danger btn-sm"><i class="bi bi-file-earmark-pdf"></i> Export PDF</a>
@@ -68,7 +67,7 @@
                         {% if show_out_of_stock %}
                             <input type="hidden" name="show_out_of_stock" value="true">
                         {% endif %}
-                        <input type="text" name="search" class="form-control" placeholder="Search by name or category..." value="{{ search }}">
+                        <input type="text" name="search" class="form-control" placeholder="Search by item name..." value="{{ search }}">
                         <button type="submit" class="btn btn-primary"><i class="bi bi-search"></i> Search</button>
                         {% if search %}
                             <a href="/{% if show_out_of_stock %}?show_out_of_stock=true{% endif %}" class="btn btn-outline-secondary">Clear</a>
@@ -113,10 +112,11 @@
                         <tr>
                             <th>ID</th>
                             <th>Name</th>
-                            <th>Category</th>
                             <th>Quantity</th>
+                            <th>Purchase Date</th>
                             <th>Purchase Price</th>
                             <th>Selling Price</th>
+                            <th>Selling Date</th>
                             <th class="text-end">Actions</th>
                         </tr>
                     </thead>
@@ -126,15 +126,19 @@
                             <tr {% if item.quantity == 0 %}class="table-light text-muted"{% endif %}>
                                 <td>{{ item.id }}</td>
                                 <td class="fw-semibold">{{ item.name }}</td>
-                                <td><span class="badge bg-secondary">{{ item.category }}</span></td>
                                 <td>
                                     <span class="badge {% if item.quantity > 5 %}bg-success{% elif item.quantity > 0 %}bg-warning text-dark{% else %}bg-danger{% endif %}">
                                         {{ item.quantity }} in stock
                                     </span>
                                 </td>
+                                <td>{{ item.purchase_date.strftime('%Y-%m-%d') if item.purchase_date else 'N/A' }}</td>
                                 <td>${{ "%.2f"|format(item.price) }}</td>
                                 <td>${{ "%.2f"|format(item.sold) }}</td>
+                                <td>{{ item.sold_date.strftime('%Y-%m-%d') if item.sold_date else 'N/A' }}</td>
                                 <td class="text-end action-btns">
+                                    <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editModal{{ item.id }}" title="Edit Item">
+                                        <i class="bi bi-pencil"></i>
+                                    </button>
                                     <button class="btn btn-sm btn-outline-success" data-bs-toggle="modal" data-bs-target="#addStockModal{{ item.id }}" title="Add Stock">
                                         <i class="bi bi-box-arrow-in-down"></i> Restock
                                     </button>
@@ -149,7 +153,7 @@
                             {% endfor %}
                         {% else %}
                             <tr>
-                                <td colspan="7" class="text-center py-4 text-muted">No items found in inventory.</td>
+                                <td colspan="8" class="text-center py-4 text-muted">No items found in inventory.</td>
                             </tr>
                         {% endif %}
                     </tbody>
@@ -159,9 +163,53 @@
     </div>
 </div>
 
-<!-- ITEM MODALS (RESTOCK & SELL) -->
+<!-- ITEM MODALS (EDIT, RESTOCK & SELL) -->
 {% if items %}
     {% for item in items %}
+    <!-- Modal: Edit Item -->
+    <div class="modal fade" id="editModal{{ item.id }}" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <form action="/edit/{{ item.id }}" method="post">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Edit Item #{{ item.id }}</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label class="form-label">Item Name</label>
+                            <input type="text" name="name" class="form-control" value="{{ item.name }}" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Quantity</label>
+                            <input type="number" name="quantity" class="form-control" value="{{ item.quantity }}" min="0" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Purchase Date</label>
+                            <input type="date" name="purchase_date" class="form-control" value="{{ item.purchase_date.strftime('%Y-%m-%d') if item.purchase_date else '' }}">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Purchase Price ($)</label>
+                            <input type="number" step="0.01" name="price" class="form-control" value="{{ "%.2f"|format(item.price) }}" min="0" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Selling Price ($)</label>
+                            <input type="number" step="0.01" name="selling_price" class="form-control" value="{{ "%.2f"|format(item.sold) }}" min="0" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Selling Date</label>
+                            <input type="date" name="sold_date" class="form-control" value="{{ item.sold_date.strftime('%Y-%m-%d') if item.sold_date else '' }}">
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Save Changes</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
     <!-- Modal: Restock Item -->
     <div class="modal fade" id="addStockModal{{ item.id }}" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog">
@@ -234,10 +282,6 @@
                         <input type="text" name="name" class="form-control" placeholder="e.g., iPhone 13 Pro" required>
                     </div>
                     <div class="mb-3">
-                        <label class="form-label">Category</label>
-                        <input type="text" name="category" class="form-control" placeholder="e.g., telefonok, laptop" required>
-                    </div>
-                    <div class="mb-3">
                         <label class="form-label">Quantity</label>
                         <input type="number" name="quantity" class="form-control" value="1" min="0" required>
                     </div>
@@ -248,7 +292,6 @@
                     <div class="mb-3">
                         <label class="form-label">Selling Price ($)</label>
                         <input type="number" step="0.01" name="selling_price" class="form-control" value="0.00" min="0" required>
-                        <div class="form-text">If quantity is 1 and a selling price is entered, stock will automatically set to 0.</div>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -270,7 +313,7 @@
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
-                    <p class="text-muted small">Upload an <code>.xlsx</code> file containing columns: <strong>name</strong>, <strong>category</strong>, <strong>quantity</strong>, <strong>purchase_price</strong>, and <strong>selling_price</strong>.</p>
+                    <p class="text-muted small">Upload an <code>.xlsx</code> file containing columns: <strong>name</strong>, <strong>quantity</strong>, <strong>purchase_price</strong>, and <strong>selling_price</strong>.</p>
                     <div class="mb-3">
                         <input type="file" name="file" accept=".xlsx, .xls" class="form-control" required>
                     </div>
@@ -284,7 +327,6 @@
     </div>
 </div>
 
-<!-- Bootstrap 5 JS Bundle -->
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
