@@ -4,153 +4,132 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Telefonok - Inventory Management</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        body { background-color: #f8f9fa; }
+        .card-stat { border-left: 4px solid #0d6efd; }
+        .card-stat-val { border-left: 4px solid #198754; }
+        .card-stat-sold { border-left: 4px solid #ffc107; }
+        .action-btns .btn { padding: 0.25rem 0.5rem; font-size: 0.875rem; }
+    </style>
 </head>
-<body class="bg-slate-100 text-slate-800 antialiased font-sans">
+<body>
 
-    <!-- Navigation Header -->
-    <nav class="bg-slate-900 text-white shadow-lg">
-        <div class="max-w-7xl mx-auto px-4 py-4 flex flex-col sm:flex-row justify-between items-center gap-4">
-            <h1 class="text-xl font-bold tracking-wide flex items-center gap-2">
-                📱 Telefonok Inventory
-            </h1>
-            <div class="flex flex-wrap gap-2 justify-center">
-                <a href="/" class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition">Dashboard</a>
-                <a href="/analytics" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm font-semibold px-4 py-2 rounded-lg transition">Analytics</a>
-                <a href="/export/excel" class="bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition">Export Excel</a>
-                <a href="/export/pdf" class="bg-rose-600 hover:bg-rose-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition">PDF Report</a>
-            </div>
+<nav class="navbar navbar-expand-lg navbar-dark bg-primary mb-4 shadow-sm">
+    <div class="container">
+        <a class="navbar-brand fw-bold" href="/"><i class="bi bi-phone"></i> Telefonok Inventory</a>
+        <div class="d-flex gap-2">
+            <a href="/analytics" class="btn btn-outline-light btn-sm"><i class="bi bi-graph-up"></i> Analytics</a>
+            <a href="/export/excel" class="btn btn-light btn-sm"><i class="bi bi-file-earmark-excel"></i> Export Excel</a>
+            <a href="/export/pdf" class="btn btn-danger btn-sm"><i class="bi bi-file-earmark-pdf"></i> Export PDF</a>
         </div>
-    </nav>
+    </div>
+</nav>
 
-    <div class="max-w-7xl mx-auto px-4 py-6 space-y-6">
+<div class="container pb-5">
 
-        <!-- Summary Metrics -->
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
-                <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total Units in Stock</span>
-                <span class="text-2xl font-bold text-slate-900 block mt-1">{{ total_items }}</span>
-            </div>
-            <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
-                <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total Inventory Value</span>
-                <span class="text-2xl font-bold text-emerald-600 block mt-1">${{ total_val }}</span>
-            </div>
-            <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
-                <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total Units Sold</span>
-                <span class="text-2xl font-bold text-blue-600 block mt-1">{{ total_sold }}</span>
-            </div>
-        </div>
-
-        <!-- Add Item Form & Excel Import -->
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            
-            <!-- Register Purchase Form -->
-            <div class="lg:col-span-2 bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-                <h2 class="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
-                    ➕ Register New Purchase / Item
-                </h2>
-                <form action="/add" method="POST" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div>
-                        <label class="block text-xs font-semibold text-slate-600 mb-1">Item Name / Phone Model</label>
-                        <input type="text" name="name" required placeholder="e.g. iPhone 13 Pro" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
-                    </div>
-                    <div>
-                        <label class="block text-xs font-semibold text-slate-600 mb-1">Category</label>
-                        <input type="text" name="category" required placeholder="e.g. Smartphones" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
-                    </div>
-                    <div>
-                        <label class="block text-xs font-semibold text-slate-600 mb-1">Quantity Purchased</label>
-                        <input type="number" name="quantity" min="1" required placeholder="e.g. 5" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
-                    </div>
-                    <div>
-                        <label class="block text-xs font-semibold text-slate-600 mb-1">Unit Price ($)</label>
-                        <input type="number" step="0.01" name="price" min="0" required placeholder="e.g. 450.00" class="w-full border border-slate-300 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
-                    </div>
-                    <div class="sm:col-span-2">
-                        <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 rounded-lg transition shadow-sm">
-                            Save Item to Inventory
-                        </button>
-                    </div>
-                </form>
-            </div>
-
-            <!-- Import Excel Form -->
-            <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col justify-between">
-                <div>
-                    <h2 class="text-lg font-bold text-slate-900 mb-2">📥 Import Excel</h2>
-                    <p class="text-xs text-slate-500 mb-4">Upload an <code>.xlsx</code> file with headers: <strong>name, category, quantity, price</strong>.</p>
+    <!-- KPI Summary Cards -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-4">
+            <div class="card shadow-sm card-stat">
+                <div class="card-body">
+                    <h6 class="card-subtitle text-muted mb-1">Total Items in Stock</h6>
+                    <h3 class="card-title mb-0 fw-bold text-primary">{{ total_items }}</h3>
                 </div>
-                <form action="/import/excel" method="POST" enctype="multipart/form-data" class="space-y-3">
-                    <input type="file" name="file" accept=".xlsx, .xls" required class="block w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
-                    <button type="submit" class="w-full bg-slate-800 hover:bg-slate-900 text-white font-semibold py-2 rounded-lg text-sm transition">
-                        Upload & Sync
-                    </button>
-                </form>
             </div>
         </div>
-
-        <!-- Inventory List Table -->
-        <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-            <div class="p-4 border-b border-slate-200 flex flex-col sm:flex-row justify-between items-center gap-3">
-                <h2 class="text-lg font-bold text-slate-900">Current Stock Items</h2>
-                <form action="/" method="GET" class="w-full sm:w-auto">
-                    <input type="text" name="search" value="{{ search }}" placeholder="Search stock..." class="border border-slate-300 rounded-lg px-3 py-1.5 text-sm w-full sm:w-64 focus:ring-2 focus:ring-blue-500 focus:outline-none">
-                </form>
-            </div>
-
-            <div class="overflow-x-auto">
-                <table class="w-full text-left border-collapse text-sm">
-                    <thead>
-                        <tr class="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase text-xs">
-                            <th class="py-3 px-4">ID</th>
-                            <th class="py-3 px-4">Name</th>
-                            <th class="py-3 px-4">Category</th>
-                            <th class="py-3 px-4">Stock</th>
-                            <th class="py-3 px-4">Price</th>
-                            <th class="py-3 px-4">Sold</th>
-                            <th class="py-3 px-4">Stock Operations</th>
-                            <th class="py-3 px-4 text-right">Action</th>
-                        </tr>
-                    </thead>
-                    <tbody class="divide-y divide-slate-100">
-                        {% for item in items %}
-                        <tr class="hover:bg-slate-50/80 transition">
-                            <td class="py-3 px-4 font-mono text-slate-400">#{{ item.id }}</td>
-                            <td class="py-3 px-4 font-semibold text-slate-900">{{ item.name }}</td>
-                            <td class="py-3 px-4 text-slate-600"><span class="bg-slate-100 px-2 py-1 rounded text-xs">{{ item.category }}</span></td>
-                            <td class="py-3 px-4 font-bold {% if item.quantity < 5 %}text-amber-600{% else %}text-slate-800{% endif %}">
-                                {{ item.quantity }}
-                            </td>
-                            <td class="py-3 px-4 font-medium text-emerald-600">${{ "%.2f"|format(item.price) }}</td>
-                            <td class="py-3 px-4 text-slate-600">{{ item.sold }}</td>
-                            <td class="py-3 px-4">
-                                <form action="/update_stock/{{ item.id }}" method="POST" class="flex items-center gap-1.5">
-                                    <input type="number" name="amount" value="1" min="1" class="w-14 border border-slate-300 rounded px-2 py-1 text-xs focus:outline-none">
-                                    <button type="submit" name="action" value="add" class="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-xs font-semibold px-2 py-1 rounded">
-                                        + Restock
-                                    </button>
-                                    <button type="submit" name="action" value="sell" class="bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-xs font-semibold px-2 py-1 rounded">
-                                        - Sell
-                                    </button>
-                                </form>
-                            </td>
-                            <td class="py-3 px-4 text-right">
-                                <form action="/delete/{{ item.id }}" method="POST" onsubmit="return confirm('Delete this item?');">
-                                    <button type="submit" class="text-rose-500 hover:text-rose-700 font-semibold text-xs">Delete</button>
-                                </form>
-                            </td>
-                        </tr>
-                        {% else %}
-                        <tr>
-                            <td colspan="8" class="text-center py-8 text-slate-400">No items found in inventory.</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+        <div class="col-md-4">
+            <div class="card shadow-sm card-stat-val">
+                <div class="card-body">
+                    <h6 class="card-subtitle text-muted mb-1">Total Inventory Value</h6>
+                    <h3 class="card-title mb-0 fw-bold text-success">${{ total_val }}</h3>
+                </div>
             </div>
         </div>
-
+        <div class="col-md-4">
+            <div class="card shadow-sm card-stat-sold">
+                <div class="card-body">
+                    <h6 class="card-subtitle text-muted mb-1">Total Units Sold</h6>
+                    <h3 class="card-title mb-0 fw-bold text-warning">{{ total_sold }}</h3>
+                </div>
+            </div>
+        </div>
     </div>
 
-</body>
-</html>
+    <!-- Action Bar & Search -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-body">
+            <div class="row g-3 align-items-center">
+                <div class="col-md-6">
+                    <form action="/" method="get" class="d-flex gap-2">
+                        <input type="text" name="search" class="form-control" placeholder="Search by name or category..." value="{{ search }}">
+                        <button type="submit" class="btn btn-primary"><i class="bi bi-search"></i> Search</button>
+                        {% if search %}
+                            <a href="/" class="btn btn-outline-secondary">Clear</a>
+                        {% endif %}
+                    </form>
+                </div>
+                <div class="col-md-6 d-flex justify-content-md-end gap-2">
+                    <button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#addItemModal">
+                        <i class="bi bi-plus-lg"></i> Add New Item
+                    </button>
+                    <button class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#importExcelModal">
+                        <i class="bi bi-file-earmark-arrow-up"></i> Import Excel
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Inventory Table -->
+    <div class="card shadow-sm">
+        <div class="card-header bg-white py-3">
+            <h5 class="mb-0 fw-bold">Inventory Items</h5>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover table-striped align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>ID</th>
+                            <th>Name</th>
+                            <th>Category</th>
+                            <th>Quantity</th>
+                            <th>Unit Price</th>
+                            <th>Units Sold</th>
+                            <th class="text-end">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if items %}
+                            {% for item in items %}
+                            <tr>
+                                <td>{{ item.id }}</td>
+                                <td class="fw-semibold">{{ item.name }}</td>
+                                <td><span class="badge bg-secondary">{{ item.category }}</span></td>
+                                <td>
+                                    <span class="badge {% if item.quantity > 5 %}bg-success{% elif item.quantity > 0 %}bg-warning text-dark{% else %}bg-danger{% endif %}">
+                                        {{ item.quantity }} in stock
+                                    </span>
+                                </td>
+                                <td>${{ "%.2f"|format(item.price) }}</td>
+                                <td>{{ item.sold }}</td>
+                                <td class="text-end action-btns">
+                                    <button class="btn btn-sm btn-outline-success" data-bs-toggle="modal" data-bs-target="#addStockModal{{ item.id }}" title="Add Stock">
+                                        <i class="bi bi-box-arrow-in-down"></i> Restock
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-warning text-dark" data-bs-toggle="modal" data-bs-target="#sellModal{{ item.id }}" title="Sell Item" {% if item.quantity <= 0 %}disabled{% endif %}>
+                                        <i class="bi bi-cart-check"></i> Sell
+                                    </button>
+                                    <form action="/delete/{{ item.id }}" method="post" class="d-inline" onsubmit="return confirm('Are you sure you want to delete this item?');">
+                                        <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+                                    </form>
+                                </td>
+                            </tr>
+
+                            <!-- Modal: Restock Item -->
+                            <div class="modal fade" id="addStockModal{{ item.id }}" tabindex="-1" aria-hidden="true">
+                                <div class="modal-dialog">

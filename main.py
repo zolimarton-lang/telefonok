@@ -111,6 +111,7 @@ def update_stock(
     item_id: int, 
     action: str = Form(...), 
     amount: int = Form(...),
+    selling_price: Optional[float] = Form(None),
     db: Session = Depends(get_db)
 ):
     item = db.query(Item).filter(Item.id == item_id).first()
@@ -120,6 +121,11 @@ def update_stock(
         elif action == "sell":
             if amount > item.quantity:
                 raise HTTPException(status_code=400, detail="Not enough stock available")
+            
+            # If custom selling price is provided, update item unit price accordingly
+            if selling_price is not None and selling_price >= 0:
+                item.price = selling_price
+                
             item.quantity -= amount
             item.sold += amount
         db.commit()
@@ -184,7 +190,7 @@ def export_excel(db: Session = Depends(get_db)):
 async def import_excel(file: UploadFile = File(...), db: Session = Depends(get_db)):
     contents = await file.read()
     try:
-        # Read Excel completely as string dtypes to prevent Pandas NaN float errors
+        # Read Excel completely as string dtypes to prevent Pandas NaN float conversion errors
         df = pd.read_excel(io.BytesIO(contents), dtype=str)
         df.columns = [str(col).strip().lower() for col in df.columns]
         
@@ -217,64 +223,4 @@ async def import_excel(file: UploadFile = File(...), db: Session = Depends(get_d
             
             if name_val.lower() == "nan":
                 name_val = "Unnamed Item"
-            if category_val.lower() == "nan":
-                category_val = "General"
-
-            new_item = Item(
-                name=name_val,
-                category=category_val,
-                quantity=max(0, parse_int(row.get("quantity"), default=1)),
-                price=max(0.0, parse_float(row.get("price"), default=0.0)),
-                sold=max(0, parse_int(row.get("sold"), default=0))
-            )
-            db.add(new_item)
-            
-        db.commit()
-        return RedirectResponse(url="/", status_code=303)
-        
-    except HTTPException as he:
-        raise he
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid file format: {str(e)}")
-
-@app.get("/export/pdf")
-def export_pdf(db: Session = Depends(get_db)):
-    items = db.query(Item).all()
-    buffer = io.BytesIO()
-    
-    doc = SimpleDocTemplate(buffer, pagesize=letter)
-    elements = []
-    styles = getSampleStyleSheet()
-
-    elements.append(Paragraph("Inventory Management Summary Report", styles['Title']))
-    elements.append(Spacer(1, 18))
-
-    data = [["ID", "Name", "Category", "Quantity", "Price ($)", "Sold"]]
-    for item in items:
-        data.append([
-            str(item.id),
-            item.name,
-            item.category,
-            str(item.quantity),
-            f"{item.price:.2f}",
-            str(item.sold)
-        ])
-
-    table = Table(data, colWidths=[40, 160, 110, 70, 70, 50])
-    table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2563EB")),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, 0), 10),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-        ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor("#F8FAFC")),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#E2E8F0")),
-    ]))
-
-    elements.append(table)
-    doc.build(elements)
-    
-    buffer.seek(0)
-    headers = {"Content-Disposition": "attachment; filename=inventory_report.pdf"}
-    return StreamingResponse(buffer, media_type="application/pdf", headers=headers)
+            if category_val.lower() == "nan
