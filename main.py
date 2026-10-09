@@ -1,24 +1,28 @@
 import os
 import io
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
-from fastapi import FastAPI, Request, Form, UploadFile, File, HTTPException, Depends
+
+from fastapi import FastAPI, Request, Form, UploadFile, File, HTTPException, Depends, Query
 from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
+
 import pandas as pd
 from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet
 
-from sqlalchemy import create_engine, Column, Integer, String, Float
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 
 # --- DATABASE SETUP ---
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./inventory.db")
 
+# Render compatibility for PostgreSQL connection string
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
@@ -34,8 +38,10 @@ class Item(Base):
     name = Column(String, index=True)
     category = Column(String, index=True)
     quantity = Column(Integer, default=0)
-    price = Column(Float, default=0.0)  # Purchase Price
-    sold = Column(Float, default=0.0)   # Selling Price
+    price = Column(Float, default=0.0)      # Purchase Price
+    sold = Column(Float, default=0.0)       # Selling Price
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 Base.metadata.create_all(bind=engine)
 
@@ -76,19 +82,18 @@ def index(
     db: Session = Depends(get_db)
 ):
     query = db.query(Item)
-    
     if search:
         s = f"%{search.lower()}%"
         query = query.filter(Item.name.ilike(s) | Item.category.ilike(s))
     
     all_items = db.query(Item).all()
     
-    # Calculate KPIs across ALL items (including stock = 0)
+    # Calculate KPIs across all items in DB
     total_items = sum(i.quantity for i in all_items)
     total_val = sum(i.quantity * i.price for i in all_items)
     total_sold = sum(i.sold for i in all_items)
     
-    # Filter UI list by stock level unless explicitly requested
+    # Hide stock == 0 by default on the main inventory screen
     if not show_out_of_stock:
         query = query.filter(Item.quantity > 0)
         
@@ -163,10 +168,96 @@ def delete_item(item_id: int, db: Session = Depends(get_db)):
         db.commit()
     return RedirectResponse(url="/", status_code=303)
 
+@app.get("/reports", response_class=HTMLResponse)
+def reports_hub(
+    request: Request,
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+    db: Session = Depends(get_db)
+):
+    all_items = db.query(Item).all()
+    today = datetime.utcnow()
+
+    # 1. Date Range Sales & Activity Filtering
+    date_filtered_items = all_items
+    if start_date:
+        try:
+            s_dt = datetime.strptime(start_date, "%Y-%m-%d")
+            date_filtered_items = [i for i in date_filtered_items if i.updated_at >= s_dt]
+        except ValueError:
+            pass
+    if end_date:
+        try:
+            e_dt = datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+            date_filtered_items = [i for i in date_filtered_items if i.updated_at <= e_dt]
+        except ValueError:
+            pass
+
+    # 2. Category Performance Report
+    categories = {}
+    for i in all_items:
+        cat = i.category or "Uncategorized"
+        if cat not in categories:
+            categories[cat] = {"count": 0, "total_qty": 0, "purchase_val": 0.0, "sales_val": 0.0}
+        categories[cat]["count"] += 1
+        categories[cat]["total_qty"] += i.quantity
+        categories[cat]["purchase_val"] += (i.quantity * i.price)
+        categories[cat]["sales_val"] += (i.quantity * i.sold)
+
+    cat_report = [
+        {
+            "category": k,
+            "item_count": v["count"],
+            "total_qty": v["total_qty"],
+            "purchase_val": round(v["purchase_val"], 2),
+            "potential_sales": round(v["sales_val"], 2),
+            "potential_profit": round(v["sales_val"] - v["purchase_val"], 2)
+        } for k, v in categories.items()
+    ]
+
+    # 3. Oldest Items & Aging Report
+    aging_items = []
+    for i in all_items:
+        age_days = (today - (i.created_at or today)).days
+        aging_items.append({
+            "id": i.id, "name": i.name, "category": i.category,
+            "quantity": i.quantity, "created_at": i.created_at.strftime("%Y-%m-%d") if i.created_at else "N/A",
+            "age_days": age_days
+        })
+    aging_items.sort(key=lambda x: x["age_days"], reverse=True)
+
+    # 4. Low & Out of Stock Report
+    low_stock_items = [i for i in all_items if i.quantity <= 2]
+
+    # 5. Profitability & Margin Ranking Report
+    margin_items = []
+    for i in all_items:
+        profit = round(i.sold - i.price, 2)
+        margin_pct = round((profit / i.price * 100), 1) if i.price > 0 else (100.0 if i.sold > 0 else 0.0)
+        margin_items.append({
+            "id": i.id, "name": i.name, "category": i.category,
+            "purchase_price": i.price, "selling_price": i.sold,
+            "profit": profit, "margin_pct": margin_pct
+        })
+    margin_items.sort(key=lambda x: x["profit"], reverse=True)
+
+    return templates.TemplateResponse(
+        request=request,
+        name="reports.html",
+        context={
+            "start_date": start_date or "",
+            "end_date": end_date or "",
+            "date_items": date_filtered_items,
+            "cat_report": cat_report,
+            "aging_items": aging_items[:10],
+            "low_stock": low_stock_items,
+            "margin_items": margin_items
+        }
+    )
+
 @app.get("/analytics", response_class=HTMLResponse)
 def analytics(request: Request, db: Session = Depends(get_db)):
     items = db.query(Item).all()
-    
     formatted_items = []
     for i in items:
         formatted_items.append({
@@ -186,25 +277,40 @@ def analytics(request: Request, db: Session = Depends(get_db)):
     )
 
 @app.get("/export/excel")
-def export_excel(db: Session = Depends(get_db)):
-    # Export EVERY item (including stock 0)
+def export_excel(
+    report_type: str = Query("all"),
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+    db: Session = Depends(get_db)
+):
     items = db.query(Item).all()
+
+    if start_date:
+        try:
+            s_dt = datetime.strptime(start_date, "%Y-%m-%d")
+            items = [i for i in items if i.updated_at >= s_dt]
+        except ValueError:
+            pass
+    if end_date:
+        try:
+            e_dt = datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+            items = [i for i in items if i.updated_at <= e_dt]
+        except ValueError:
+            pass
+
     data = [{
-        "id": i.id, 
-        "name": i.name, 
-        "category": i.category, 
-        "quantity": i.quantity, 
-        "purchase_price": i.price, 
-        "selling_price": i.sold
+        "ID": i.id, "Name": i.name, "Category": i.category, 
+        "Quantity": i.quantity, "Purchase Price": i.price, "Selling Price": i.sold,
+        "Created Date": i.created_at.strftime("%Y-%m-%d") if i.created_at else ""
     } for i in items]
     
     df = pd.DataFrame(data)
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="Inventory")
+        df.to_excel(writer, index=False, sheet_name="Report")
     output.seek(0)
 
-    headers = {"Content-Disposition": "attachment; filename=inventory_report.xlsx"}
+    headers = {"Content-Disposition": f"attachment; filename=inventory_report_{report_type}.xlsx"}
     return StreamingResponse(
         output, 
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
@@ -237,16 +343,14 @@ async def import_excel(file: UploadFile = File(...), db: Session = Depends(get_d
             name_val = str(row.get("name", "")).strip() or "Unnamed Item"
             category_val = str(row.get("category", "")).strip() or "General"
             
-            if name_val.lower() == "nan":
-                name_val = "Unnamed Item"
-            if category_val.lower() == "nan":
-                category_val = "General"
+            if name_val.lower() == "nan": name_val = "Unnamed Item"
+            if category_val.lower() == "nan": category_val = "General"
 
             purchase_price = parse_float(row.get("purchase_price") or row.get("price") or row.get("unit_price"))
             selling_price = parse_float(row.get("selling_price") or row.get("sold") or row.get("units_sold"))
             raw_quantity = parse_int(row.get("quantity"), default=1)
 
-            # Enforce rule: if qty == 1 and selling_price > 0, set qty = 0
+            # Rule: if qty == 1 and selling_price > 0, set stock to 0
             final_quantity = adjust_quantity(raw_quantity, selling_price)
 
             new_item = Item(
@@ -256,53 +360,4 @@ async def import_excel(file: UploadFile = File(...), db: Session = Depends(get_d
                 price=purchase_price,
                 sold=selling_price
             )
-            db.add(new_item)
-            
-        db.commit()
-        return RedirectResponse(url="/", status_code=303)
-        
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid file format: {str(e)}")
-
-@app.get("/export/pdf")
-def export_pdf(db: Session = Depends(get_db)):
-    # Export EVERY item (including stock 0)
-    items = db.query(Item).all()
-    buffer = io.BytesIO()
-    
-    doc = SimpleDocTemplate(buffer, pagesize=letter)
-    elements = []
-    styles = getSampleStyleSheet()
-
-    elements.append(Paragraph("Inventory Management Summary Report", styles["Title"]))
-    elements.append(Spacer(1, 18))
-
-    data = [["ID", "Name", "Category", "Quantity", "Purchase ($)", "Selling ($)"]]
-    for item in items:
-        data.append([
-            str(item.id),
-            item.name,
-            item.category,
-            str(item.quantity),
-            f"{item.price:.2f}",
-            f"{item.sold:.2f}"
-        ])
-
-    table = Table(data, colWidths=[30, 170, 100, 60, 80, 80])
-    table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2563EB")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
-        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, 0), 10),
-        ("BOTTOMPADDING", (0, 0), (-1, 0), 8),
-        ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#F8FAFC")),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#E2E8F0")),
-    ]))
-
-    elements.append(table)
-    doc.build(elements)
-    
-    buffer.seek(0)
-    headers = {"Content-Disposition": "attachment; filename=inventory_report.pdf"}
-    return StreamingResponse(buffer, media_type="application/pdf", headers=headers)
+            db.add(
